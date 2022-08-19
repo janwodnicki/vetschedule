@@ -344,17 +344,24 @@ class Scheduler:
         self.status_cell.color = Color.GREEN
         self.status_cell.value = 'Exported!'
 
-
-def main():
+def main(args):
     """
     Usage:
     scheduler.py generate <excelpath>
     scheduler.py pdf <excelpath>
     """
-    return 0
+    try:
+        book = xw.Book(args['<excelpath>'])
+    except Exception as e:
+        print(e)
+        return e
+
+    if args['generate']:
+        Scheduler(book).generate_schedule()
+
+    if args['pdf']:
+        Scheduler(book).generate_pdf(args['<excelpath>'])
 
 if __name__ == '__main__':
-    arguments = docopt(main.__doc__)
-    print(arguments)
-    # if os.path.exists('ScheduleTemplate.xlsm')
-    # scheduler = Scheduler()
+    args = docopt(main.__doc__)
+    main(args)
