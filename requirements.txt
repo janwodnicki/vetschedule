@@ -1,0 +1,5 @@
+cvxpy==1.1.18
+cylp==0.91.5
+pandas==1.1.3
+xlwings==0.20.8
+reportlab==3.6.9
