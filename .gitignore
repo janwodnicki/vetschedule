@@ -1,2 +1,6 @@
+<<<<<<< Updated upstream
 /env
 /build
+=======
+$'\env\n\build' 
+>>>>>>> Stashed changes
