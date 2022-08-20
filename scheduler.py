@@ -350,17 +350,19 @@ def main(args):
     scheduler.py generate <excelpath>
     scheduler.py pdf <excelpath>
     """
+    path = fr"{args['<excelpath>']}"
+
     try:
-        book = xw.Book(args['<excelpath>'])
+        book = xw.Book(path)
     except Exception as e:
         print(e)
         return e
 
     if args['generate']:
-        Scheduler(book).generate_schedule()
+        return Scheduler(book).generate_schedule()
 
     if args['pdf']:
-        Scheduler(book).generate_pdf(args['<excelpath>'])
+        return Scheduler(book).generate_pdf(path)
 
 if __name__ == '__main__':
     args = docopt(main.__doc__)
