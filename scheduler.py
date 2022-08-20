@@ -1,11 +1,12 @@
-from multiprocessing.sharedctypes import Value
 import os
+import logging
 from datetime import datetime
-
 import xlwings as xw
 import pandas as pd
 import numpy as np
 import cvxpy as cp
+import os
+import sys
 from docopt import docopt
 
 from reportlab.lib.pagesizes import letter, landscape
@@ -14,8 +15,29 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib import colors
 
+
+## Logging setup
+LOCATION = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
+
+logger = logging.getLogger('vetschedule')
+logger.setLevel(logging.DEBUG)
+
+fh = logging.FileHandler(os.path.join(LOCATION, 'scheduler.log'))
+fh.setLevel(logging.DEBUG)
+
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+fh.setFormatter(formatter)
+ch.setFormatter(formatter)
+
+logger.addHandler(fh)
+logger.addHandler(ch)
+
 # Runs optimization model given Excel inputs
 def run_model(staff_info, hyper_params, avail, n_in, b_in, r_in):
+    logger.info("Running model...")
     # Sets
     num_weeks, num_staff = avail.shape
     people = list(range(0, num_staff))
@@ -142,7 +164,11 @@ def run_model(staff_info, hyper_params, avail, n_in, b_in, r_in):
         hyper_params[3] * pair_cost
     )
     prob = cp.Problem(obj, constraints)
-    prob.solve(solver='GUROBI', TimeLimit=120)
+    try:
+        prob.solve(solver='GUROBI', TimeLimit=120)
+    except Exception as e:
+        logger.error(f"Could not solve problem, error: {e}")
+    logger.info(f"Gurobi problem status: {prob.status}")
     return (n, b, r, prob.status)
 
 # Enumeration of status colors
@@ -154,10 +180,13 @@ class Color():
 
 class Scheduler:
     def __init__(self, workbook=None):
+        logger.info("Initializing Scheduler...")
         if isinstance(workbook, xw.Book):
             self.workbook = workbook
+            logger.info("Scheduler received workbook object")
         else:
             self.workbook = xw.Book.caller()
+            logger.info("Scheduler used xlwings caller to retrieve workbook")
         self.input_sheet = self.workbook.sheets['User Input']
         self.output_sheet = self.workbook.sheets['FinalSchedule']
         self.status_cell = self.output_sheet.range('C4')
@@ -168,6 +197,7 @@ class Scheduler:
 
     def get_staff_info(self):
         ### Parse staff info
+        logger.info("Getting staff info...")
         self.status_cell.color = Color.YELLOW
         self.status_cell.value = 'Importing Data...'
         num_staff = int(self.input_sheet.range('B12').value)
@@ -185,6 +215,7 @@ class Scheduler:
             self.status_cell.color = Color.RED
             self.status_cell.value = 'Missing Data'
             self.workbook.macro('MissingStaffData')()
+            logger.error(f"Missing staff data, staff info found: {staff_info}")
             raise ValueError
         staff_info['b_target'] = staff_info.target_weeks.astype(int) / 2
         staff_info['n_target'] = staff_info.target_weeks.astype(int) / 2
@@ -194,18 +225,21 @@ class Scheduler:
 
     ### Parse hyperparameters
     def get_hyper_params(self):
+        logger.info("Getting hyperparameters...")
         slider_cells = [(5, 8), (9, 8), (13, 8), (17, 8)]
         hyper_params = [self.input_sheet.range(cell).value for cell in slider_cells]
         return hyper_params
 
     ### Parse schedule inputs
     def get_schedule_data_in(self):
+        logger.info("Parsing schedule inputs...")
         staff_info = self.get_staff_info()
         headers = staff_info.person
         schedule_data_in = pd.DataFrame(self.schedule_range.value, columns=headers)
         return schedule_data_in
 
     def generate_schedule(self):
+        logger.info("Generating schedule...")
         try:
             staff_info = self.get_staff_info()
         except Exception as _:
@@ -222,12 +256,14 @@ class Scheduler:
         self.status_cell.value = 'Running model...'
         try:
             n, b, r, prob_status = run_model(staff_info, hyper_params, avail, n_in, b_in, r_in)
-        except Exception as _:
+        except Exception as e:
+            logger.error(f"Model error: {e}")
             self.status_cell.color = Color.RED
             self.status_cell.value = 'Model Error'
             return
 
         if prob_status == 'infeasible_or_unbounded':
+            logger.error(f"Model is infeasible or unbounded")
             self.status_cell.color = Color.RED
             self.status_cell.value = 'Infeasible'
             self.workbook.macro('InfeasibleSol')()
@@ -246,6 +282,7 @@ class Scheduler:
         self.workbook.macro('MultipleConditionalFormattingExample')()
 
     def get_duty_schedule(self):
+        logger.info("Getting duty schedule...")
         def join_cols(row):
             values = (row * ~row.isna()).to_list()
             return ',   '.join(list(filter(lambda x: x != "", values)))
@@ -266,6 +303,7 @@ class Scheduler:
 
 
     def generate_pdf(self, cfilepath):
+        logger.info("Generating pdf...")
         data = self.get_duty_schedule()
         data['From'] = data['From'].dt.strftime('%m/%d/%y')
         data['To'] = data['To'].dt.strftime('%m/%d/%y')
@@ -335,6 +373,7 @@ class Scheduler:
             rightMargin=0.35*inch,
         )
 
+        logger.info("Building and saving pdf document...")
         doc.build(
             story,
             onFirstPage=addPageNumberCreated,
@@ -351,19 +390,25 @@ def main(args):
     scheduler.py pdf <excelpath>
     """
     path = fr"{args['<excelpath>']}"
+    dirname = os.path.dirname(path)
 
     try:
+        logger.info("Attempting to intialize workbook from path...")
         book = xw.Book(path)
     except Exception as e:
-        print(e)
-        return e
+        logger.error(f"Encountered error when trying to open workbook: {e}")
+        return
 
     if args['generate']:
+        logger.info("Received command to generate schedule")
         return Scheduler(book).generate_schedule()
 
     if args['pdf']:
-        return Scheduler(book).generate_pdf(path)
+        logger.info("Received command to generate pdf")
+        return Scheduler(book).generate_pdf(dirname)
 
 if __name__ == '__main__':
+    logger.info(f"Arguments received from sys: {sys.argv}")
     args = docopt(main.__doc__)
+    logger.info(f"Arguments received from docopt: {args}")
     main(args)
